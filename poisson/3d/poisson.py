@@ -2,7 +2,7 @@
 from scipy.sparse import lil_matrix
 import numpy as np
 
-def poisson(pts, elements, bc_nodes, f, u_bc, element, quadrature, scaling=1.0):
+def poisson(pts, elements, bc_nodes, f, u_bc, element, scaling=1.0):
     """Set up a Galerkin FEM system approximating the Poisson equation with Dirichlet B.C
     on a domain described by a mesh in (pts, elements).
 
@@ -25,48 +25,31 @@ def poisson(pts, elements, bc_nodes, f, u_bc, element, quadrature, scaling=1.0):
     A = lil_matrix((n_nodes, n_nodes))
     b = np.zeros(n_nodes)
 
-    # Get quadrature points and weights
-    q_pts = quadrature.points()
-    q_w   = quadrature.weights()
-    n_quadrature_points = len(q_pts)
-
-    E = element()
-    # precompute values of shape functions at all quadrature points,
-    # as well as values of their derivatives:
-    chi = np.zeros((E.n_chi(), n_quadrature_points))
-    dchi = np.zeros((E.n_chi(), n_quadrature_points, 2))
-    for j in xrange(E.n_chi()):
-        for q in xrange(n_quadrature_points):
-            chi[j,q] = E.chi(j, q_pts[q])
-            dchi[j,q,:] = E.dchi(j, q_pts[q]).T
+    n_quadrature_points = element.n_quadrature_points()
+    n_chi = element.n_chi()
+    chi = element.chi
 
     # for each element...
     for k in xrange(n_elements):
         # initialize the current element
-        E.reset(pts[elements[k]])
-
-        # compute dchi with respect to x,y (using chain rule)
-        # and det(J)*w at all quadrature points:
-        dchi_xy = np.zeros((E.n_chi(), n_quadrature_points,  2))
-        det_JxW = np.zeros(n_quadrature_points)
-        for q in xrange(n_quadrature_points):
-            J_inv = E.J_inverse(q_pts[q])
-            for j in xrange(E.n_chi()):
-                dchi_xy[j,q,:] = (J_inv * np.matrix(dchi[j,q,:]).T).T
-
-            det_JxW[q] = E.det_J(q_pts[q]) * q_w[q]
+        element.reset(pts[elements[k]])
+        det_JxW = element.detJxW
+        dphi = element.dphi_xy
 
         # for each shape function $\phi_i$...
-        for i in xrange(E.n_chi()):
+        for i in xrange(n_chi):
             row = elements[k, i]
 
+            if bc_nodes[row]:
+                continue
+
             # for each shape function $\phi_j$...
-            for j in xrange(E.n_chi()):
+            for j in xrange(n_chi):
                 col = elements[k, j]
 
                 for q in xrange(n_quadrature_points):
                     # stiffness matrix:
-                    A[row, col] += det_JxW[q] * np.dot(dchi_xy[i,q], dchi_xy[j,q])
+                    A[row, col] += det_JxW[q] * (dphi[i,q,0]*dphi[j,q,0] + dphi[i,q,1]*dphi[j,q,1] + dphi[i,q,2]*dphi[j,q,2])
 
                     # right hand side:
                     b[row] += det_JxW[q] * chi[i,q] * (f[col]  * chi[j,q])
@@ -74,7 +57,6 @@ def poisson(pts, elements, bc_nodes, f, u_bc, element, quadrature, scaling=1.0):
     # enforce Dirichlet boundary conditions:
     for k in xrange(n_nodes):
         if bc_nodes[k]:
-            A[k,:] = 0.0
             A[k,k] = 1.0 * scaling
             b[k] = u_bc[k] * scaling
 

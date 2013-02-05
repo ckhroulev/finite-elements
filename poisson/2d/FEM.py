@@ -46,11 +46,11 @@ class P1(FEMElement):
         self._detJ = np.linalg.det(self._J)
 
     def n_chi(self):
-        """Return the number of shape functions."""
+        """Return the number of element basis functions."""
         return 3
 
     def chi(self, r, (xi, eta)):
-        """P1 shape functions."""
+        """P1 element basis functions."""
         if   r == 0:
             return 1 - xi - eta
         elif r == 1:
@@ -61,7 +61,7 @@ class P1(FEMElement):
         raise ValueError("invalid argument (r)")
 
     def dchi(self, r, point):
-        """Derivatives of P1 shape functions.
+        """Derivatives of P1 element basis functions.
 
         These are constant on the whole element."""
         if   r == 0:
@@ -90,11 +90,11 @@ class Q1(FEMElement):
     """The Q1 element."""
 
     def n_chi(self):
-        """Number of shape functions."""
+        """Number of element basis functions."""
         return 4
 
     def chi(self, r, (xi, eta)):
-        """Q1 shape functions. See (1.26), page 23 of Elman and others."""
+        """Q1 element basis functions. See (1.26), page 23 of Elman and others."""
         if   r == 0:
             return (xi - 1)*(eta - 1) / 4.0
         elif r == 1:
@@ -107,7 +107,7 @@ class Q1(FEMElement):
         raise ValueError("invalid argument (r)")
 
     def dchi(self, r, (xi, eta)):
-        """Derivatives of Q1 shape functions."""
+        """Derivatives of Q1 element basis functions."""
         if   r == 0:
             return np.matrix([eta - 1, xi - 1]).T / 4.0
         elif r == 1:
