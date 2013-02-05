@@ -7,7 +7,19 @@ import FEM, create_mesh, plot_mesh
 import poisson_optimized as poisson
 import time
 
-from test import set_bc_nodes_square
+def set_bc_nodes_square(pts):
+    """Sets up B.C. nodes in the [-1,1]x[-1,1] square case."""
+    n_nodes = pts.shape[0]
+    bc_nodes = np.zeros(n_nodes)
+
+    eps = 1e-6
+    for k in xrange(n_nodes):
+        x,y = pts[k]
+        if (np.fabs(x - 1) < eps or np.fabs(x - (-1)) < eps or
+            np.fabs(y - 1) < eps or np.fabs(y - (-1)) < eps):
+            bc_nodes[k] = 1
+
+    return bc_nodes
 
 def f(pts):
     """zero forcing term"""
@@ -67,4 +79,4 @@ plt.ylabel("max error")
 loc, _ = plt.yticks()
 plt.yticks(loc, ["10^(%1.1f)" % x for x in loc])
 plt.xticks(np.log10(dxs), ["%1.4f" % x for x in dxs])
-plt.savefig("poisson-convergence.pdf")
+plt.savefig("poisson-convergence.png")

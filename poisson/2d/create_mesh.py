@@ -1,11 +1,12 @@
 #!/usr/bin/env python
-from py_distmesh2d import huniform, dcircle, drectangle, ddiff, distmesh2d, fixmesh
 import numpy as np
 
 # Triangular mesh (using distmesh2d):
 bbox = [[-1, 1], [-1, 1]]
 
 def tri_circle(hole=False):
+    from py_distmesh2d import huniform, dcircle, drectangle, ddiff, distmesh2d, fixmesh
+
     def circle(pts):
         return dcircle(pts, 0, 0, 1)
 
@@ -27,6 +28,8 @@ def tri_circle(hole=False):
 
 def tri_ell():
     """L-shaped domain from 'Finite Elements and Fast Iterative Solvers' by Elman, Silvester, and Wathen."""
+    from py_distmesh2d import huniform, dcircle, drectangle, ddiff, distmesh2d, fixmesh
+
     pfix_ell = [[1,1], [1, -1], [0, -1], [0, 0], [-1, 0], [-1, 1]]
     def ell(pts):
         return ddiff(drectangle(pts, -1, 1, -1, 1), drectangle(pts, -2, 0, -2, 0))
@@ -43,6 +46,8 @@ def tri_ell():
 
 def tri_square():
     """[-1, 1] * [-1, 1] square"""
+    from py_distmesh2d import huniform, dcircle, drectangle, ddiff, distmesh2d, fixmesh
+
     pfix_square = [[-1, -1], [1, -1], [1, 1], [-1, 1]]
 
     def square(pts):
