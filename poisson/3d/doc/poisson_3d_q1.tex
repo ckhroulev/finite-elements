@@ -1,0 +1,659 @@
+\documentclass{article}
+\usepackage{amsmath,theorem,listings}
+\usepackage[usenames]{xcolor}
+\usepackage[margin=1in,letterpaper]{geometry}
+\usepackage[noend]{algpseudocode}
+
+\usepackage[pdftex,
+colorlinks=true,
+plainpages=false, % only if colorlinks=true
+linkcolor=blue,   % only if colorlinks=true
+citecolor=blue,   % only if colorlinks=true
+urlcolor=blue     % only if colorlinks=true
+]{hyperref}
+
+\newcommand{\tmop}[1]{\ensuremath{\operatorname{#1}}}
+{ \theorembodyfont{\upshape} \newtheorem{note}{Note} }
+{ \theorembodyfont{\upshape} \newtheorem{remark}{Remark} }
+
+\lstset{
+language=Python,
+basicstyle=\footnotesize\ttfamily,
+keywordstyle=\color{blue},
+numbers=left,
+numbersep=5pt,
+numberstyle=\tiny\color{gray},
+commentstyle=\color{gray},
+}
+
+\begin{document}
+
+\title{Solving the Poisson equation in 3D using $Q_{1}$ finite elements}
+\author{C.Khroulev}
+\maketitle
+
+{\tableofcontents}
+
+\section{Model problem}
+
+I will focus on implementing a $Q_1$ FEM solver for the 3D Poisson equation on
+a ``cube'', with Dirichlet boundary conditions on 5 sides and Neumann on the
+remaining one.
+
+\subsection{Domain}
+
+\begin{eqnarray*}
+  \Omega & = & (- 1, 1) \times (- 1, 1) \times (- 1, 1),\\
+  \partial \Omega & = & \{ (x, y, z) | x = \pm 1 \vee y = \pm 1 \vee z = \pm
+  1 \},\\
+  \partial \Omega_N & = & \partial \Omega \setminus \{ (x, y, z) |z = 1 \},\\
+  \partial \Omega_D & = & \partial \Omega \setminus \partial \Omega_N .
+\end{eqnarray*}
+
+\subsection{Boundary value problem}
+
+Find a function $u$ satisfying the following: $u \in C^2 (\Omega)$, $u \in
+C^0 (\bar{\Omega})$, and
+\begin{eqnarray}
+  - \nabla^2 u & = & f \text{ in } \Omega,  \label{eq:poisson}\\
+  u & = & g_D  \text{ on } \partial \Omega_D, \nonumber\\
+  \frac{\partial u}{\partial \vec{n}} & = & g_N  \text{ on } \partial \Omega_N
+  . \nonumber
+\end{eqnarray}
+I will consider the particular case $g_N \equiv 0$, because I don't know how
+to approximate boundary integrals otherwise...
+
+\subsection{Weak formulation}
+
+Define solution and test spaces
+\begin{eqnarray*}
+  \mathcal{H}_E^1 (\Omega) & = & \{ u \in \mathcal{H}^1 (\Omega) | u = g_D
+  \text{ on } \partial \Omega_D \},\\
+  \mathcal{H}^1_{E_0} (\Omega) & = & \{ u \in \mathcal{H}^1 (\Omega) | u = 0
+  \text{ on } \partial \Omega_D \} .
+\end{eqnarray*}
+Note that by the ``derivative of the product'' rule
+\[ \nabla \cdot (v \nabla u) = \nabla v \cdot \nabla u + v \nabla^2 u, \]
+or
+\begin{equation}
+  - v \nabla^2 u = \nabla v \cdot \nabla u - \nabla \cdot (v \nabla u) .
+  \label{eq:productrule}
+\end{equation}
+In addition to this, the divergence theorem applied to the last term in
+(\ref{eq:productrule}) implies
+\[ \int_{\Omega} \nabla \cdot (v \nabla u) = \int_{\partial \Omega} v \nabla
+   u \cdot \vec{n} = \int_{\partial \Omega} v g_N . \]
+Using this, I multiply (\ref{eq:poisson}) by a test function $\varphi \in
+\mathcal{H}^1_{E_0} (\Omega)$ and integrate by parts to obtain the weak form
+\begin{equation}
+  \int_{\Omega} \nabla u \cdot \nabla \varphi = \int_{\Omega} f \varphi +
+  \int_{\partial \Omega_N} \varphi g_N  \text{ for all } \varphi \in
+  \mathcal{H}^1_{E_0} (\Omega) \label{eq:weakpoisson}
+\end{equation}
+
+\section{Galerkin approximation}
+
+Define a logically rectangular grid on $\Omega$:
+\begin{equation*}
+\begin{array}{lllllllllll}
+  - 1 & = & X_{0, j, k} & < & X_{i, j, k} & < & X_{i + 1, j, k} & < & X_{I, j, k} & = & 1,\\
+  &  &  &  & X_{i + 1, j, k} & - & X_{i, j, k} & = & \Delta x, &  & \\
+  - 1 & = & Y_{i, 0, k} & < & Y_{i, j, k} & < & Y_{i, j + 1, k} & < & Y_{i, J, k} & = & 1,\\
+  &  &  &  & Y_{i, j + 1, k} & - & Y_{i, j, k} & = & \Delta y, &  & \\
+  - 1 & = & Z_{i, j, 0} & < & Z_{i, j, k} & < & Z_{i, j, k + 1} & < & Z_{i, j, K} & = & 1.\\
+\end{array}
+\end{equation*}
+There are no assumptions about the $Z$ spacing at any $i$ and $j$.
+
+This gives $N_P = (I + 1) (J + 1) (K + 1)$ grid points and splits $\Omega$
+into $N_E = I \times J \times K$ hexahedral elements.
+
+See \cite[section 1.3]{Elmanetal2005} for the construction of approximating
+spaces $S_0^h$ for $\mathcal{H}^1_{E_0}$ and $S_E^h$ for $\mathcal{H}_E^1$
+(this procedure is the same for all Galerkin methods).
+
+Given this approximation, (\ref{eq:weakpoisson}) becomes
+\begin{equation}
+  \begin{array}{c}
+    \text{Find } u_h \in S_E^h  \text{ so that}\\
+    \displaystyle
+    \int_{\Omega} \nabla u_h \cdot \nabla v_h = \int_{\Omega} f v_h +
+    \int_{\partial \Omega_N} v_h g_N  \text{ for all } v_h \in S_0^h (\Omega)
+    . \label{eq:galerkinpoisson}
+  \end{array}
+\end{equation}
+Neumann boundary conditions appear in (\ref{eq:galerkinpoisson}) explicitly,
+while Dirichlet boundary conditions are built into the solution space
+$\mathcal{H}_E^1 (\Omega)$.
+
+\subsection{Building the system of equations}
+
+For computation it is convenient to enforce (\ref{eq:galerkinpoisson}) for
+each basis function $\varphi_j$. Then (\ref{eq:galerkinpoisson}) is equivalent
+to finding $u_i$ so that
+\begin{eqnarray*}
+  \int_{\Omega} \sum_{i = 1}^N u_i \nabla \varphi_i \cdot \nabla \varphi_j & =
+  & \int_{\Omega} f \varphi_j + \int_{\partial \Omega_N} \varphi_j g_N,\\
+  \sum_{i = 1}^N u_i \int_{\Omega} \nabla \varphi_i \cdot \nabla \varphi_j & =
+  & \int_{\Omega} f \varphi_j + \int_{\partial \Omega_N} \varphi_j g_N .
+\end{eqnarray*}
+holds for all $j = 1, \ldots, N$.
+
+This can be written as $A u = b$, where $A$ is an $N_P \times N_P$ matrix and
+$b$ is a column vector with $N_P$ elements, and
+\begin{eqnarray*}
+  a_{i, j} & = & \int_{\Omega} \nabla \varphi_i \cdot \nabla \varphi_j,\\
+  b_j & = & \int_{\Omega} f \varphi_j + \int_{\partial \Omega_N} \varphi_j g_N
+  .
+\end{eqnarray*}
+Now, the partition of $\Omega$ into elements $E_k$ (and the fact that
+$\tmop{supp} (\varphi_i) \cap \tmop{supp} (\varphi_j)$ is either empty or
+equal to an element $E_k$ for some $k$) allows re-writing $a_{i, j}$ and $b_j$
+in terms of integrals over individual elements:
+\begin{eqnarray}
+  a_{i, j} & = & \sum_{k = 1}^{N_P} \int_{E_k} \nabla \varphi_i \cdot \nabla
+  \varphi_j,  \label{eq:matrix}\\
+  b_j & = & \sum_{k = 1}^{N_P} \int_{E_k} f \varphi_j + \int_{\partial
+  \Omega_N \cap E_k} g_N \varphi_j .  \label{eq:rhs}
+\end{eqnarray}
+\begin{note}
+  Everything above applies in the case of \emph{any} Galerkin approximation
+  of the boundary value problem for the Poisson equation on $\Omega$.
+\end{note}
+
+\begin{remark}
+  I find definitions of ``global'' basis functions $\varphi_j$ distracting.
+  All I really need to know are preimages (with respect to $M$
+  (\ref{eq:map})) of restrictions of $\varphi_j$ to individual elements \
+  \emph{and} that $\varphi_j$ resulting from out choices of $M$ and $\chi_j$
+  have desired smoothness properties.
+\end{remark}
+
+\section{$Q_1$ elements}
+
+I define element basis functions by considering the reference element and using
+a linear isoparametric map to physical elements. This ensures that
+$\varphi_j$ are continuous across element boundaries and produces a conforming
+approximation \cite[section 1.3.4]{Elmanetal2005}.
+
+\subsection{Element basis}\label{sec:elementbasis}
+
+Consider the reference element \cite[page 2.126]{Kardestuncer1987}:
+\begin{equation}
+  E_{\ast} = [ - 1, 1] \times [ - 1, 1] \times [ - 1, 1] \label{eq:reference}
+\end{equation}
+in the 3D Cartesian right-handed coordinate system with coordinates $\xi, \eta, \zeta$. I list the corners of this hexahedron in the
+counter-clockwise order, first for $\zeta = - 1$, then for $\zeta = 1$:
+\begin{eqnarray}
+  \xi & = & (- 1, 1, 1, - 1, - 1, 1, 1, - 1), \nonumber\\
+  \eta & = & (- 1, - 1, 1, 1, - 1, - 1, 1, 1),  \label{eq:order}\\
+  \zeta & = & (- 1, - 1, - 1, - 1, 1, 1, 1, 1) . \nonumber
+\end{eqnarray}
+Now the coordinates of the $j$-th node are $(\xi_j, \eta_j, \zeta_j)$ and all
+$8$ shape functions can be defined by
+\begin{equation}
+  \chi_j (\xi, \eta, \zeta) = \frac{1}{8} (1 + \xi \xi_j) (1 + \eta \eta_j)
+  (1 + \zeta \zeta_j) . \label{eq:elementbasis}
+\end{equation}
+
+\subsection{Map from the reference to a physical element}
+
+I number the nodes of a physical element $E_k$ in the order defined by
+(\ref{eq:order}) and use the \emph{isoparametric} map $M : (\xi, \eta,
+\zeta) \mapsto (x, y, z)$:
+\begin{eqnarray}
+  x (\xi, \eta, \zeta) & = & \sum_{j = 1}^8 x_j \cdot \chi_j (\xi, \eta,
+  \zeta), \nonumber\\
+  y (\xi, \eta, \zeta) & = & \sum_{j = 1}^8 y_j \cdot \chi_j (\xi, \eta,
+  \zeta),  \label{eq:map}\\
+  z (\xi, \eta, \zeta) & = & \sum_{j = 1}^8 z_j \cdot \chi_j (\xi, \eta,
+  \zeta) . \nonumber
+\end{eqnarray}
+Let $J_k$ be the Jacobian of $M$,
+\begin{equation}
+  J_k = \left(\begin{array}{ccc}
+    \frac{\partial x}{\partial \xi} & \frac{\partial y}{\partial \xi} &
+    \frac{\partial z}{\partial \xi}\\
+    \frac{\partial x}{\partial \eta} & \frac{\partial y}{\partial \eta} &
+    \frac{\partial z}{\partial \eta}\\
+    \frac{\partial x}{\partial \zeta} & \frac{\partial y}{\partial \zeta} &
+    \frac{\partial z}{\partial \zeta}
+  \end{array}\right) . \label{eq:jacobian}
+\end{equation}
+\begin{note}
+  $J_k$ is a function of coordinates of nodes of the corresponding physical
+  element $k$.
+\end{note}
+
+\begin{note}
+  An important requirement is $| J_k | \neq 0$, which ensures that $M$ is
+  invertible.
+\end{note}
+
+\begin{remark}
+  This is \emph{two} maps, in fact: one mapping the reference element to a
+  physical element and the second one mapping element basis functions $\chi_j$
+  defined on the reference element to restrictions of ``global'' basis
+  functions $\varphi_j$ on physical elements. The term ``isoparametric'' means
+  that these two maps have the same number of parameters.
+\end{remark}
+
+\section{Assembling the linear system}
+
+My goal is to assemble the linear system defined by (\ref{eq:matrix}) and
+(\ref{eq:rhs}). Now is the time to re-write these very general expressions in
+Cartesian coordinates and think about approximating integrals that appear in
+definitions of $a_{i, j}$ and $b_j$.
+
+\subsection{Assembling the matrix}
+
+In Cartesian coordinates (\ref{eq:matrix}) becomes
+\begin{eqnarray}
+  a_{i, j} & = & \sum_{k = 1}^{N_P} \int_{E_k} \nabla \varphi_i \cdot \nabla
+  \varphi_j \nonumber\\
+  & = & \sum_{k = 1}^{N_P} \int_{E_k} \left(\frac{\partial
+  \varphi_i}{\partial x}, \frac{\partial \varphi_i}{\partial y},
+  \frac{\partial \varphi_i}{\partial z} \right) \cdot \left(\frac{\partial
+  \varphi_j}{\partial x}, \frac{\partial \varphi_j}{\partial y},
+  \frac{\partial \varphi_j}{\partial z} \right) \tmop{dx} \tmop{dy} \tmop{dz}
+  \nonumber\\
+  & = & \sum_{k = 1}^{N_P} I_k, \text{ where} \nonumber\\
+  I_k & = & \int_{E_k} \left(\frac{\partial \varphi_i}{\partial x},
+  \frac{\partial \varphi_i}{\partial y}, \frac{\partial \varphi_i}{\partial z}
+  \right) \cdot \left(\frac{\partial \varphi_j}{\partial x}, \frac{\partial
+  \varphi_j}{\partial y}, \frac{\partial \varphi_j}{\partial z} \right)
+  \tmop{dx} \tmop{dy} \tmop{dz} . \label{eq:ik}
+\end{eqnarray}
+I would like to approximate $I_k$ using a quadrature, but defining quadrature
+points and weights on an arbitrary physical element is unpractical. Instead,
+I change variables to express $I_k$ as an integral over $E_{\ast}$ (see
+(\ref{eq:reference})) and with respect to $d \xi, d \eta, d \zeta$. Then I
+can use a standard quadrature on $E_{\ast}$, usually obtained using a tensor
+product of points and weights corresponding to a one-dimensional quadrature
+scheme.
+
+\subsubsection{Change of variables}
+
+The chain rule implies
+\begin{equation}
+\frac{\partial \varphi_j}{\partial x} = \frac{\partial \varphi_j}{\partial
+   \xi} \cdot \frac{\partial \xi}{\partial x} + \frac{\partial
+   \varphi_j}{\partial \eta} \cdot \frac{\partial \eta}{\partial x} +
+   \frac{\partial \varphi_j}{\partial \zeta} \cdot \frac{\partial
+   \zeta}{\partial x} \label{eq:chainrule}
+ \end{equation}
+and similarly for $y$ and $z$. So, on a physical element $E_k$ I have
+\begin{equation}
+  \left(
+    \begin{array}{c}
+      \frac{\partial \varphi_j}{\partial x}\\
+      \frac{\partial \varphi_j}{\partial y}\\
+      \frac{\partial \varphi_j}{\partial z}
+   \end{array}
+ \right) = J_k^{- 1} \left(
+   \begin{array}{c}
+     \frac{\partial \varphi_j}{\partial \xi}\\
+     \frac{\partial \varphi_j}{\partial \eta}\\
+     \frac{\partial \varphi_j}{\partial \zeta}
+   \end{array}
+ \right),\label{eq:2}
+\end{equation}
+where $J_k^{- 1}$ is the inverse of the Jacobian (\ref{eq:jacobian}). On the
+reference element $E_{\ast}$, though, I have $\varphi_i = \chi_i$, so I get
+\begin{equation}
+  I_k = \int_{E_{\ast}} J_k^{- 1} \left( \begin{array}{c}
+    \frac{\partial \chi_i}{\partial \xi}\\
+    \frac{\partial \chi_i}{\partial \eta}\\
+    \frac{\partial \chi_i}{\partial \zeta}
+  \end{array} \right) \cdot J_k^{- 1} \left( \begin{array}{c}
+    \frac{\partial \chi_j}{\partial \xi}\\
+    \frac{\partial \chi_j}{\partial \eta}\\
+    \frac{\partial \chi_j}{\partial \zeta}
+  \end{array} \right) | J_k | d \xi d \eta d \zeta . \label{eq:ikfinal}
+\end{equation}
+
+
+\subsection{Assembling the right hand side vector $b$}
+
+Recall that the right hand side of our system is
+\begin{eqnarray}
+  b_j & = & \sum_{k = 1}^{N_P} \left(\int_{E_k} f \varphi_j + \int_{\partial
+  \Omega_N \cap E_k} g_N \varphi_j \right), \nonumber\\
+  & = & \sum_{k = 1}^{N_P} (F_j + N_j), \text{ where} \nonumber\\
+  F_j & = & \int_{E_k} f \varphi_j,  \label{eq:force}\\
+  N_j & = & \int_{\partial \Omega_N \cap E_k} g_N \varphi_j .
+  \label{eq:neumann}
+\end{eqnarray}
+I will approximate $F_k$ and $N_k$ using quadratures. In all practical cases
+analytical expressions for $f$ and $g_{N}$ are no available but their values at locations of grid
+(or mesh) nodes are, so I have to approximate integrands first. The easiest and
+most natural way to approximate $f$ and $g_N$ is
+\begin{eqnarray*}
+  f^h & = & \sum_{j = 1}^{N_P} f (p_j) \varphi_j,\\
+  g^h_N & = & \sum_{p_j \in \partial \Omega_N} g_N (p_j) \varphi_j .
+\end{eqnarray*}
+Then
+\begin{eqnarray}
+  F_j & \approx & \int_{E_k} \varphi_j \sum_{i = 1}^{N_P} f (p_i) \varphi_i
+  \nonumber\\
+  & = & \sum_{i = 1}^{N_P} \int_{E_k} f (p_i) \varphi_i \varphi_j,
+  \label{eq:forcefinal}\\
+  & = & \sum_{i = 1}^{N_P} \int_{E_{\ast}} f (p_i) \chi_i \chi_j  | J_k |
+  \nonumber\\
+  N_j & \approx & \int_{\partial \Omega_N \cap E_k} \varphi_j \sum_{p_j \in
+  \partial \Omega_N} g_N (p_j) \varphi_j \nonumber\\
+  & = & \sum_{p_j \in \partial \Omega_{N \cap E_k}} \int_{\partial \Omega_N
+  \cap E_k} g_N (p_j) \varphi_i \varphi_j .  \label{eq:neumannfinal}
+\end{eqnarray}
+\begin{note}
+  It is just as easy to handle variable-coefficient equations, e.g. $- \nabla
+  (k (x, y, z) \nabla u) = f$.
+\end{note}
+
+\begin{remark}
+  It is worth pointing out that evaluating $f^h$ at a quadrature point $p$ is
+  equivalent to using trilinear interpolation and nodal values of $f$ to
+  approximate $f (p)$.
+\end{remark}
+
+\subsection{Gaussian quadrature on the reference element $E_{\ast}$}
+
+As pointed out earlier one of the advantages of defining shape functions using
+a reference element and a linear map (\ref{eq:map}) to a physical element is
+that it allows one to use quadratures obtained as a tensor product of 1D
+quadratures on the standard interval $[ - 1, 1]$.
+
+To approximate $I_k$ (see (\ref{eq:ikfinal})) and $F_j$ (see
+(\ref{eq:forcefinal})) I use the $8$-point quadrature
+\begin{eqnarray*}
+  q_i = (\xi^{\ast}_i, \eta^{\ast}_i, \zeta^{\ast}_i) & = & \left(
+  \frac{\xi_i}{\sqrt{3}}, \frac{\eta_i}{\sqrt{3}}, \frac{\zeta_i}{\sqrt{3}}
+  \right),\\
+  w_i & = & 1,
+\end{eqnarray*}
+where $i = 1, \ldots, 8$ and $\xi_i$, $\eta_i$, and $\zeta_i$ are defined in
+(\ref{eq:order}).
+
+To approximate $N_j$ I need a 2D quadrature on the \emph{face}
+approximating $\partial \Omega_N \cap E_k$. I use the $2 \times 2$ Gaussian
+quadrature
+\begin{eqnarray*}
+  \xi & = & \left(\frac{- 1}{\sqrt{3}}, \frac{1}{\sqrt{3}},
+  \frac{1}{\sqrt{3}}, \frac{- 1}{\sqrt{3}} \right),\\
+  \eta & = & \left(\frac{- 1}{\sqrt{3}}, \frac{- 1}{\sqrt{3}},
+  \frac{1}{\sqrt{3}}, \frac{1}{\sqrt{3}} \right),\\
+  \zeta_i & = & 1,\\
+  w_i & = & 1.
+\end{eqnarray*}
+(This corresponds to the top face of an element. I don't know where to go from
+here, though.)
+
+\section{Implementation: an outline}
+
+Information above is sufficient to implement a Poisson solver... but a very
+inefficient one.
+
+This section describes some implementation techniques that make assembling
+large systems feasible.
+
+\subsection{Precompute values of $\chi_i$ and their partial derivatives}
+
+The first thing to notice is that all integrals I need to approximate ($I_k$
+--- see (\ref{eq:ikfinal}) and $F_j$ --- see (\ref{eq:forcefinal})) allow
+precomputing values of element basis functions and their partial derivatives.
+(These integrals involve derivatives with respect to $\xi$, $\eta$, and
+$\zeta$, not $x$, $y$, and $z$.)
+
+\subsection{Combine $| J_k |$ with quadrature weights}
+
+The determinant of the Jacobian $J_k$ at a quadrature point always appears
+multiplied by the corresponding quadrature weight. (Note also that in the
+quadrature I use all weights are equal to $1$.)
+
+\subsection{Loop through the grid (or mesh) element by element}
+
+When assembling the matrix, go element by element and add element
+contributions to corresponding matrix elements. This allows one to easily
+handle irregular meshes, plus this way each $I_k$ and $F_J$ is computed only
+once. See \cite[section 1.4.3]{Elmanetal2005} for details.
+
+A naive version of the assembly code for $A$ and $b$ is in Figure \ref{fig:pythonnaive}.
+\begin{figure}
+  \centering
+  \begin{lstlisting}
+for k in xrange(n_elements):
+  E.reset(pts[elements[k]])
+
+  for i in xrange(E.n_chi()):
+    row = elements[k, i]
+
+    for j in xrange(E.n_chi()):
+      col = elements[k, j]
+
+      for q in xrange(n_quadrature_points):
+        dchi_i = E.J_inverse(q_pts[q]) * E.dchi(i, q_pts[q])
+        dchi_j = E.J_inverse(q_pts[q]) * E.dchi(j, q_pts[q])
+
+        A[row, col] += q_w[q] * E.det_J(q_pts[q]) * (dchi_i.T * dchi_j)
+
+        b[row] += (q_w[q] * E.det_J(q_pts[q]) * E.chi(i, q_pts[q]) *
+                   (f[col] * E.chi(j, q_pts[q])))
+
+for k in xrange(n_nodes):
+  if bc_nodes[k]:
+    A[k,:] = 0.0
+    A[k,k] = 1.0
+    b[k] = u_bc[k]
+  \end{lstlisting}
+  \caption{Naive assembly in Python. Compare to \eqref{eq:ikfinal} and \eqref{eq:forcefinal}.}
+\label{fig:pythonnaive}
+\end{figure}
+
+This code is easy to understand, it is generic (works with various element and quadrature types), but it is very slow.
+One can do a lot better by moving some computations out of inner loops. The improved assembly algorithm follows.
+
+\begin{figure}
+  \centering
+  \begin{lstlisting}
+# precompute values of shape functions at all quadrature points:
+chi = np.zeros((n_quadrature_points, E.n_chi()))
+for j in xrange(E.n_chi()):
+    for q in xrange(n_quadrature_points):
+        chi[j, q] = E.chi(j, q_pts[q])
+
+# precompute values of derivatives of shape functions at all quadrature points:
+dchi = np.zeros((n_quadrature_points, E.n_chi(), 2))
+for q in xrange(n_quadrature_points):
+    for j in xrange(E.n_chi()):
+        dchi[q,j,:] = E.dchi(j, q_pts[q]).T
+
+# for each element...
+for k in xrange(n_elements):
+    # initialize the current element
+    E.reset(pts[elements[k]])
+
+    # compute dchi with respect to x,y (using chain rule)
+    # and det(J)*w at all quadrature points:
+    dchi_xy = np.zeros((E.n_chi(), n_quadrature_points,  2))
+    det_JxW = np.zeros(n_quadrature_points)
+    for q in xrange(n_quadrature_points):
+        J_inv = E.J_inverse(q_pts[q])
+        for j in xrange(E.n_chi()):
+            dchi_xy[j,q,:] = (J_inv * np.matrix(dchi[q,j,:]).T).T
+
+        det_JxW[q] = E.det_J(q_pts[q]) * q_w[q]
+
+    # for each shape function $\phi_i$...
+    for i in xrange(E.n_chi()):
+        row = elements[k, i]
+
+        # for each shape function $\phi_j$...
+        for j in xrange(E.n_chi()):
+            col = elements[k, j]
+
+            for q in xrange(n_quadrature_points):
+                # stiffness matrix:
+                A[row, col] += det_JxW[q] * np.dot(dchi_xy[i,q], dchi_xy[j,q])
+
+                # right hand side:
+                b[row] += det_JxW[q] * chi[i,q] * (f[col]  * chi[q,j])
+
+# enforce Dirichlet boundary conditions:
+for k in xrange(n_nodes):
+    if bc_nodes[k]:
+        A[k,:] = 0.0
+        A[k,k] = 1.0 * scaling
+        b[k] = u_bc[k] * scaling
+  \end{lstlisting}
+  \caption{Precomputing linear system assembly. This code is for the 2D Poisson case;
+    only two or three lines need to change to switch to 3D, though.}
+  \label{fig:pythonbetter}
+\end{figure}
+\section{Precomputing shape functions at quadrature points}
+
+For every shape function $\chi_i$ and every quadrature point $q_j$ I compute
+$Q_{i, j} = \chi_i (q_j)$. This can be done by hand --- or using a short
+Maxima script. With present choices of shape functions and a quadrature I get
+\begin{equation}
+  Q = \left(\begin{array}{llllllll}
+    H^3 & H^2 L & HL^2 & H^2 L & H^2 L & HL^2 & L^3 & HL^2\\
+    H^2 L & H^3 & H^2 L & HL^2 & HL^2 & H^2 L & HL^2 & L^3\\
+    HL^2 & H^2 L & H^3 & H^2 L & L^3 & HL^2 & H^2 L & HL^2\\
+    H^2 L & HL^2 & H^2 L & H^3 & HL^2 & L^3 & HL^2 & H^2 L\\
+    H^2 L & HL^2 & L^3 & HL^2 & H^3 & H^2 L & HL^2 & H^2 L\\
+    HL^2 & H^2 L & HL^2 & L^3 & H^2 L & H^3 & H^2 L & HL^2\\
+    L^3 & HL^2 & H^2 L & HL^2 & HL^2 & H^2 L & H^3 & H^2 L\\
+    HL^2 & L^3 & HL^2 & H^2 L & H^2 L & HL^2 & H^2 L & H^3
+  \end{array} \right), \label{eq:shapefunctions}
+\end{equation}
+where
+\begin{eqnarray*}
+  L & = & \frac{1}{2} \left(1 - \frac{1}{\sqrt{3}} \right),\\
+  H & = & \frac{1}{2} \left(1 + \frac{1}{\sqrt{3}} \right) .
+\end{eqnarray*}
+Similarly, one can use a 3D array to store pre-computed partial derivatives of
+shape functions.
+
+Here are derivatives of shape functions with respect to $\xi$, $\eta$, and
+$\zeta$ (first column --- first shape function, second column --- second shape
+function...):
+\begin{equation}
+  Q_{\xi} = \left(\begin{array}{llllllll}
+    H^2 M & H^2 P & HLP & HLM & HLM & HLP & L^2 P & L^2 M\\
+    H^2 M & H^2 P & HLP & HLM & HLM & HLP & L^2 P & L^2 M\\
+    HLM & HLP & H^2 P & H^2 M & L^2 M & L^2 P & HLP & HLM\\
+    HLM & HLP & H^2 P & H^2 M & L^2 M & L^2 P & HLP & HLM\\
+    HLM & HLP & L^2 P & L^2 M & H^2 M & H^2 P & HLP & HLM\\
+    HLM & HLP & L^2 P & L^2 M & H^2 M & H^2 P & HLP & HLM\\
+    L^2 M & L^2 P & HLP & HLM & HLM & HLP & H^2 P & H^2 M\\
+    L^2 M & L^2 P & HLP & HLM & HLM & HLP & H^2 P & H^2 M
+  \end{array} \right), \label{eq:diffxi}
+\end{equation}
+\begin{equation}
+  Q_{\eta} = \left(\begin{array}{llllllll}
+    H^2 M & HLM & HLP & H^2 P & HLM & L^2 M & L^2 P & HLP\\
+    HLM & H^2 M & H^2 P & HLP & L^2 M & HLM & HLP & L^2 P\\
+    HLM & H^2 M & H^2 P & HLP & L^2 M & HLM & HLP & L^2 P\\
+    H^2 M & HLM & HLP & H^2 P & HLM & L^2 M & L^2 P & HLP\\
+    HLM & L^2 M & L^2 P & HLP & H^2 M & HLM & HLP & H^2 P\\
+    L^2 M & HLM & HLP & L^2 P & HLM & H^2 M & H^2 P & HLP\\
+    L^2 M & HLM & HLP & L^2 P & HLM & H^2 M & H^2 P & HLP\\
+    HLM & L^2 M & L^2 P & HLP & H^2 M & HLM & HLP & H^2 P
+  \end{array} \right), \label{eq:diffeta}
+\end{equation}
+\begin{equation}
+  Q_{\zeta} = \left(\begin{array}{llllllll}
+    H^2 M & HLM & L^2 M & HLM & H^2 P & HLP & L^2 P & HLP\\
+    HLM & H^2 M & HLM & L^2 M & HLP & H^2 P & HLP & L^2 P\\
+    L^2 M & HLM & H^2 M & HLM & L^2 P & HLP & H^2 P & HLP\\
+    HLM & L^2 M & HLM & H^2 M & HLP & L^2 P & HLP & H^2 P\\
+    H^2 M & HLM & L^2 M & HLM & H^2 P & HLP & L^2 P & HLP\\
+    HLM & H^2 M & HLM & L^2 M & HLP & H^2 P & HLP & L^2 P\\
+    L^2 M & HLM & H^2 M & HLM & L^2 P & HLP & H^2 P & HLP\\
+    HLM & L^2 M & HLM & H^2 M & HLP & L^2 P & HLP & H^2 P
+  \end{array} \right) . \label{eq:diffzeta}
+\end{equation}
+Here $P = \frac{1}{2}$ and $M = - \frac{1}{2}$. For example,
+\[ Q_{\xi, 1, 3} = \frac{\partial \chi_3}{\partial \xi} (\xi_1, \eta_1,
+   \zeta_1) = \frac{1}{2}  \frac{\left(1 + \frac{1}{\sqrt{3}} \right)}{2}
+   \frac{\left(1 - \frac{1}{\sqrt{3}} \right)}{2} = HLP. \]
+\begin{remark}
+  The only reason to list these here is to better understand (and document)
+  Jed's FEM code.
+\end{remark}
+
+\section{Pre-computing the Jacobian at quadrature points}
+
+Although it is possible to compute the Jacobian $J_k$, its determinant, and
+its inverse using (\ref{eq:map}) alone, I want to take advantage of any
+special cases to avoid unnecessary computations.
+
+\subsection{Special case: equal spacing in horizontal directions}
+
+In our application I assume that the spacing in the $x$ and $y$ directions is
+fixed and equal to $\Delta x$ and $\Delta y$ respectively. Then
+\[ J_k = \left(\begin{array}{ccc}
+     \frac{\Delta x}{2} & 0 & \frac{\partial z}{\partial \xi}\\
+     0 & \frac{\Delta y}{2} & \frac{\partial z}{\partial \eta}\\
+     0 & 0 & \frac{\partial z}{\partial \zeta}
+   \end{array}\right) . \]
+
+
+Note that $x_i$ and $y_i$ do not appear in partial derivatives of $z$ in the
+third column of $J_k$ (see (\ref{eq:mapderivatives})), so equal horizontal
+spacing does not let us simplify these. To compute partial derivatives of $z$,
+I differentiate (\ref{eq:map}) and get:
+\begin{eqnarray}
+  \frac{\partial z}{\partial \xi} (\xi, \eta, \zeta) & = & \sum_{i = 1}^8 z_i
+  \frac{\partial \chi_i}{\partial \xi} (\xi, \eta, \zeta), \nonumber\\
+  \frac{\partial z}{\partial \eta} (\xi, \eta, \zeta) & = & \sum_{i = 1}^8
+  z_i  \frac{\partial \chi_i}{\partial \eta} (\xi, \eta, \zeta),
+  \label{eq:mapderivatives}\\
+  \frac{\partial z}{\partial \zeta} (\xi, \eta, \zeta) & = & \sum_{i = 1}^8
+  z_i  \frac{\partial \chi_i}{\partial \zeta} (\xi, \eta, \zeta) . \nonumber
+\end{eqnarray}
+
+
+Note that it is also possible to use (\ref{eq:diffxi}), (\ref{eq:diffeta}), and (\ref{eq:diffzeta}) here (as with derivatives of shape functions, I need to compute the Jacobian \emph{at quadrature points only}).
+
+A matrix of this form is easy to invert by hand:
+\begin{equation}
+  \left(\begin{array}{lll}
+    a_{1, 1} & 0 & a_{1, 3}\\
+    0 & a_{2, 2} & a_{2, 3}\\
+    0 & 0 & a_{3, 3}
+  \end{array} \right)^{- 1} = \left(\begin{array}{ccc}
+    \frac{1}{a_{1, 1}} & 0 & - \frac{a_{1, 3}}{a_{1, 1} a_{3, 3}}\\
+    0 & \frac{1}{a_{2, 2}} & - \frac{a_{2, 3}}{a_{2, 2} a_{3, 3}}\\
+    0 & 0 & \frac{1}{a_{3, 3}}
+  \end{array} \right) . \label{eq:jacobianinverse}
+\end{equation}
+
+
+So, pre-computing $| J_k |$ and $J^{-1}_k$ at a quadrature point requires $3$
+steps:
+\begin{enumerate}
+  \item Use (\ref{eq:mapderivatives}) to compute partial derivatives of $z$.
+
+  \item Set $| J_k | = \frac{1}{4} \Delta x \Delta y \frac{\partial
+  z}{\partial \zeta} (\xi, \eta, \zeta)$.
+
+  \item Use (\ref{eq:jacobianinverse}) to compute $J_k^{- 1}$.
+\end{enumerate}
+
+
+\begin{thebibliography}{1}
+  \bibitem[1]{Elmanetal2005}\textsc{H.~C.~Elman}, \textsc{D.~J.~Silvester}
+  and \textsc{A.~J.~Wathen}, \textit{Finite Elements and Fast Iterative
+  Solvers: with Applications in Incompressible Fluid Dynamics}, Oxford Univ.
+  Press, 2005.{\newblock}
+
+  \bibitem[2]{Kardestuncer1987}\textsc{H.~Kardestuncer},
+  \textsc{D.~Norrie} and \textsc{F.~Brezzi}, \textit{Finite element
+  handbook}, McGraw-Hill reference books of interest: Handbooks, McGraw-Hill,
+  1987.{\newblock}
+\end{thebibliography}
+
+\end{document}
+
+% LocalWords: LocalWords Jacobian Khroulev Neumann Galerkin hexahedral hexahedron isoparametric incompressible Kardestuncer Norrie Brezzi invertible dx dy dz quadratures analytical integrands trilinear Maxima precompute precomputing

@@ -1,0 +1,28 @@
+/* -*- mode: maxima -*- */
+
+/* P1 shape functions */
+chi[3,1](xi,eta) := 1 - xi - eta$
+chi[3,2](xi,eta) := xi$
+chi[3,3](xi,eta) := eta$
+
+/* Q1 shape functions */
+chi[4,1](xi,eta) := (1/4)*(xi-1)*(eta-1)$
+chi[4,2](xi,eta) := (1/4)*(xi+1)*(1-eta)$
+chi[4,3](xi,eta) := (1/4)*(xi+1)*(eta+1)$
+chi[4,4](xi,eta) := (1/4)*(1-xi)*(eta+1)$
+
+/* Map from the reference element. */
+x(xi,eta,n) := 'sum(x[j]*chi[n,j](xi,eta), j, 1, n)$
+y(xi,eta,n) := 'sum(y[j]*chi[n,j](xi,eta), j, 1, n)$
+
+J(n) := matrix(
+  ['diff(x(xi,eta,n), xi), 'diff(y(xi,eta,n), xi)],
+  ['diff(x(xi,eta,n), eta),'diff(y(xi,eta,n), eta)])$
+
+/* Compute the Jacobian of the mapping from the reference element (times 4)*/
+four_J4 : ratsimp(ev(4*J(4), nouns))$
+
+/* If all elements are rectangles aligned with the coordinate system, then... */
+aligned_rectangle : [y[2]=y[1], y[4]=y[3], x[4]=x[1], x[3]=x[2]]$
+
+J4_aligned : factor(subst(aligned_rectangle, four_J4) / 4);
