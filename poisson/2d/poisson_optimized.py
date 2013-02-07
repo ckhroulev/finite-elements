@@ -60,6 +60,9 @@ def poisson(pts, elements, bc_nodes, f, u_bc, element, quadrature, scaling=1.0):
         for i in xrange(E.n_chi()):
             row = elements[k, i]
 
+            if bc_nodes[row]:
+                continue
+
             # for each shape function $\phi_j$...
             for j in xrange(E.n_chi()):
                 col = elements[k, j]
@@ -74,7 +77,6 @@ def poisson(pts, elements, bc_nodes, f, u_bc, element, quadrature, scaling=1.0):
     # enforce Dirichlet boundary conditions:
     for k in xrange(n_nodes):
         if bc_nodes[k]:
-            A[k,:] = 0.0
             A[k,k] = 1.0 * scaling
             b[k] = u_bc[k] * scaling
 

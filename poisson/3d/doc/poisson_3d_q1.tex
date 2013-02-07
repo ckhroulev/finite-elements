@@ -455,58 +455,44 @@ One can do a lot better by moving some computations out of inner loops. The impr
 \begin{figure}
   \centering
   \begin{lstlisting}
-# precompute values of shape functions at all quadrature points:
-chi = np.zeros((n_quadrature_points, E.n_chi()))
-for j in xrange(E.n_chi()):
-    for q in xrange(n_quadrature_points):
-        chi[j, q] = E.chi(j, q_pts[q])
-
-# precompute values of derivatives of shape functions at all quadrature points:
-dchi = np.zeros((n_quadrature_points, E.n_chi(), 2))
-for q in xrange(n_quadrature_points):
-    for j in xrange(E.n_chi()):
-        dchi[q,j,:] = E.dchi(j, q_pts[q]).T
-
 # for each element...
 for k in xrange(n_elements):
     # initialize the current element
-    E.reset(pts[elements[k]])
+    for n in xrange(n_chi):
+        nodes[n,:] = pts[elements[k,n],:]
+    element.reset(nodes)
 
-    # compute dchi with respect to x,y (using chain rule)
-    # and det(J)*w at all quadrature points:
-    dchi_xy = np.zeros((E.n_chi(), n_quadrature_points,  2))
-    det_JxW = np.zeros(n_quadrature_points)
-    for q in xrange(n_quadrature_points):
-        J_inv = E.J_inverse(q_pts[q])
-        for j in xrange(E.n_chi()):
-            dchi_xy[j,q,:] = (J_inv * np.matrix(dchi[q,j,:]).T).T
-
-        det_JxW[q] = E.det_J(q_pts[q]) * q_w[q]
+    det_JxW = element.detJxW
+    dphi    = element.dphi_xy
 
     # for each shape function $\phi_i$...
-    for i in xrange(E.n_chi()):
+    for i in xrange(n_chi):
         row = elements[k, i]
 
+        # skip rows corresponding to Dirichlet nodes
+        if bc_nodes[row]:
+            continue
+
         # for each shape function $\phi_j$...
-        for j in xrange(E.n_chi()):
+        for j in xrange(n_chi):
             col = elements[k, j]
 
             for q in xrange(n_quadrature_points):
                 # stiffness matrix:
-                A[row, col] += det_JxW[q] * np.dot(dchi_xy[i,q], dchi_xy[j,q])
+                A[row, col] += det_JxW[q] * (dphi[i,q,0]*dphi[j,q,0] +
+                                             dphi[i,q,1]*dphi[j,q,1] +
+                                             dphi[i,q,2]*dphi[j,q,2])
 
                 # right hand side:
-                b[row] += det_JxW[q] * chi[i,q] * (f[col]  * chi[q,j])
+                b[row] += det_JxW[q] * chi[i,q] * (f[col]  * chi[j,q])
 
 # enforce Dirichlet boundary conditions:
 for k in xrange(n_nodes):
     if bc_nodes[k]:
-        A[k,:] = 0.0
         A[k,k] = 1.0 * scaling
         b[k] = u_bc[k] * scaling
   \end{lstlisting}
-  \caption{Precomputing linear system assembly. This code is for the 2D Poisson case;
-    only two or three lines need to change to switch to 3D, though.}
+  \caption{Precomputing linear system assembly. Note that the code is almost completely identical, but uses table look-up instead of function calls. Derivatives of shape functions $\varphi$ are computed during the \texttt{reset()} call.}
   \label{fig:pythonbetter}
 \end{figure}
 \section{Precomputing shape functions at quadrature points}

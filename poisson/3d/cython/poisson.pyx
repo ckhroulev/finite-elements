@@ -1,8 +1,21 @@
-#!/usr/bin/env python
+# -*- mode: cython -*-
+#cython: boundscheck=False
+#cython: embedsignature=True
+#cython: wraparound=False
 from scipy.sparse import lil_matrix
 import numpy as np
+cimport numpy as np
 
-def poisson(pts, elements, bc_nodes, f, u_bc, element, scaling=1.0):
+ctypedef np.float64_t double_t
+ctypedef np.int32_t   int_t
+
+def poisson(double_t[:, :] pts,
+            int_t[:,:] elements,
+            int_t[:] bc_nodes,
+            double_t[:] f,
+            double_t[:] u_bc,
+            element,
+            float scaling=1.0):
     """Set up a Galerkin FEM system approximating the Poisson equation with Dirichlet B.C
     on a domain described by a mesh in (pts, elements).
 
@@ -20,26 +33,35 @@ def poisson(pts, elements, bc_nodes, f, u_bc, element, scaling=1.0):
     - element: constructor of the FEM element class (callable)
     - quadrature class instance
     """
-    n_nodes    = pts.shape[0]
-    n_elements = elements.shape[0]
+    cdef int n_nodes    = pts.shape[0]
+    cdef int n_elements = elements.shape[0]
+    cdef int n_quadrature_points = element.n_pts
+    cdef int n_chi = element.n_chi
+    cdef int row, col
+    cdef double_t[:,:] chi    = element.chi
+    cdef double_t[:] det_JxW  = element.detJxW
+    cdef double_t[:,:,:] dphi = element.dphi_xy
+    cdef np.ndarray[dtype=double_t, ndim=1, mode='c'] b
+    cdef np.ndarray[dtype=double_t, ndim=2, mode='c'] nodes = np.zeros((n_chi, 3))
+
     A = lil_matrix((n_nodes, n_nodes))
     b = np.zeros(n_nodes)
-
-    n_quadrature_points = element.n_quadrature_points()
-    n_chi = element.n_chi()
-    chi = element.chi
 
     # for each element...
     for k in xrange(n_elements):
         # initialize the current element
-        element.reset(pts[elements[k]])
+        for n in xrange(n_chi):
+            nodes[n,:] = pts[elements[k,n],:]
+        element.reset(nodes)
+
         det_JxW = element.detJxW
-        dphi = element.dphi_xy
+        dphi    = element.dphi_xy
 
         # for each shape function $\phi_i$...
         for i in xrange(n_chi):
             row = elements[k, i]
 
+            # skip rows corresponding to Dirichlet nodes
             if bc_nodes[row]:
                 continue
 
@@ -49,7 +71,9 @@ def poisson(pts, elements, bc_nodes, f, u_bc, element, scaling=1.0):
 
                 for q in xrange(n_quadrature_points):
                     # stiffness matrix:
-                    A[row, col] += det_JxW[q] * (dphi[i,q,0]*dphi[j,q,0] + dphi[i,q,1]*dphi[j,q,1] + dphi[i,q,2]*dphi[j,q,2])
+                    A[row, col] += det_JxW[q] * (dphi[i,q,0]*dphi[j,q,0] +
+                                                 dphi[i,q,1]*dphi[j,q,1] +
+                                                 dphi[i,q,2]*dphi[j,q,2])
 
                     # right hand side:
                     b[row] += det_JxW[q] * chi[i,q] * (f[col]  * chi[j,q])

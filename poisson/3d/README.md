@@ -1,3 +1,3 @@
-Scripts solving the Dirichlet problem for the Poisson equation in 3D.
+See `doc` for the notes describing the setup and `cython` for an implementation.
 
-`Q1.py` computes shape functions, their derivatives, `det(J)`, `J^{-1}` for `Q1` 3D elements with equal spacing in `x` and `y` directions. 
+The pure Python code can be found in an earlier revision. It is almost identical to the Cython code, but slower.

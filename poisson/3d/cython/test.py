@@ -44,7 +44,7 @@ def hex_cube(x0, x1, y0, y1, z0, z1, Mx, My, Mz):
 def set_bc_nodes_cube(pts):
     """Sets up B.C. nodes in the [-1,1]x[-1,1]x[-1,1] cube case."""
     n_nodes = pts.shape[0]
-    bc_nodes = np.zeros(n_nodes, dtype=bool)
+    bc_nodes = np.zeros(n_nodes, dtype='i')
 
     eps = 1e-6
     for k in xrange(n_nodes):
@@ -62,10 +62,13 @@ def set_bc_nodes_cube(pts):
 if __name__ == "__main__":
     # Try the quad mesh with Q1 elements:
     import poisson
-    N = 21
+    N = 11
+    Mx = N
+    My = N
+    Mz = N
 
     tic = time.clock()
-    x, y, z, pts, hexes = hex_cube(0, 1, 0, 1, 0, 1, N, N, N)
+    x, y, z, pts, hexes = hex_cube(0, 1, 0, 1, 0, 1, Mx, My, Mz)
     bc_nodes = set_bc_nodes_cube(pts)
     toc = time.clock()
     print "Mesh generation took %f s" % (toc - tic)
@@ -77,7 +80,7 @@ if __name__ == "__main__":
 
     # Set up the system and solve:
     tic = time.clock()
-    E = Q1.Q13DEquallySpaced(Q1.Gauss1())
+    E = Q1.Q13DEquallySpaced(Q1.Gauss2x2x2())
     A, b = poisson.poisson(pts, hexes, bc_nodes, f_pts, u_bc_pts, E, scaling=1.0)
     toc = time.clock()
     print "Matrix assembly took %f s" % (toc - tic)
@@ -87,9 +90,10 @@ if __name__ == "__main__":
     toc = time.clock()
     print "Sparse solve took %f s" % (toc - tic)
 
-    Z = u.reshape((N,N,N))
+    Z = u.reshape((Mz, My, Mx))
 
     # Plot:
+    from mpl_toolkits.mplot3d import Axes3D
     from matplotlib import cm
     import matplotlib.colors
 
@@ -98,6 +102,6 @@ if __name__ == "__main__":
     norm = matplotlib.colors.Normalize(vmin=Z.min(), vmax=Z.max())
     clevels = np.linspace(Z.min(), Z.max(), 21)
     for k,level in enumerate(z):
-        cset = ax.contourf(x, y, Z[k], zdir='z', levels=clevels, offset=level, cmap=cm.RdBu, alpha=0.5, norm=norm)
+        ax.contourf(x, y, Z[k], zdir='z', levels=clevels, offset=level, cmap=cm.RdBu, alpha=0.5, norm=norm)
     ax.set_zlim(z.min(), z.max())
     plt.show()
